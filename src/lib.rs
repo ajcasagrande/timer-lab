@@ -19,7 +19,80 @@
 //! failure rather than panicking — the same degrade-don't-panic contract used in
 //! aiperf's production `real_clock.rs`.
 
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// Hybrid precise sleep: OS coarse timer + busy-spin tail
+// ---------------------------------------------------------------------------
+
+/// Adaptive envelope of how far the OS coarse timer overshoots its target.
+/// Fast-attack / slow-decay so the spin margin stays above nearly all observed
+/// coarse overshoots. Starts pessimistic (2 ms) and self-calibrates *down* (to
+/// tens of µs on a Linux timerfd) or *up* (to ~ms on a virtualized macOS runner)
+/// within a single run — no per-platform constant to guess.
+static COARSE_MARGIN_NS: AtomicU64 = AtomicU64::new(2_000_000);
+const MARGIN_FLOOR_NS: i64 = 50_000;
+const MARGIN_CEIL_NS: i64 = 8_000_000;
+/// Final window spun *hard* (`spin_loop`) rather than cooperatively yielded.
+const HARD_SPIN_NS: i64 = 30_000;
+
+/// Precise sleep that is accurate regardless of the OS timer's resolution.
+///
+/// Two phases: (1) sleep with the platform coarse timer ([`sleep_ns`]) to within
+/// an adaptive margin of the deadline, then (2) approach the deadline by
+/// cooperatively yielding to the reactor until the last [`HARD_SPIN_NS`], then a
+/// hard `spin_loop`. Overshoot is bounded by the spin granularity (tens of ns),
+/// not by the OS timer — so it beats the raw backend on *every* platform. The
+/// cost is CPU burned in the tail (bounded by the adaptive margin), which is why
+/// the coarse phase is kept as large as the timer's measured accuracy allows.
+pub async fn sleep_ns_hybrid(duration_ns: i64) {
+    if duration_ns <= 0 {
+        tokio::task::yield_now().await;
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_nanos(duration_ns as u64);
+
+    let margin = COARSE_MARGIN_NS.load(Ordering::Relaxed) as i64;
+    if duration_ns > margin {
+        let coarse_target = duration_ns - margin;
+        let before = Instant::now();
+        sleep_ns(coarse_target).await;
+        let overshoot = (before.elapsed().as_nanos() as i64 - coarse_target).max(0);
+        update_margin(overshoot);
+    }
+
+    // Approach the deadline: cooperative yields give the reactor a chance to run
+    // while we're still far out; the final HARD_SPIN_NS is a tight busy-loop for
+    // the lowest-jitter landing.
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now()).as_nanos() as i64;
+        if remaining <= 0 {
+            break;
+        }
+        if remaining > HARD_SPIN_NS {
+            tokio::task::yield_now().await;
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+}
+
+/// Fast-attack / slow-decay envelope follower on the coarse overshoot, with 50%
+/// headroom so the margin covers the tail of the distribution, not just its mean.
+fn update_margin(overshoot_ns: i64) {
+    let target = overshoot_ns + overshoot_ns / 2;
+    let old = COARSE_MARGIN_NS.load(Ordering::Relaxed) as i64;
+    let updated = if target > old {
+        target // rise immediately to cover a newly-observed larger overshoot
+    } else {
+        (old * 63 / 64).max(target) // decay slowly toward the smaller target
+    };
+    COARSE_MARGIN_NS.store(
+        updated.clamp(MARGIN_FLOOR_NS, MARGIN_CEIL_NS) as u64,
+        Ordering::Relaxed,
+    );
+}
 
 /// Human-readable name of the timer backend compiled into this build.
 pub fn backend_name() -> &'static str {
