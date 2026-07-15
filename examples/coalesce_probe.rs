@@ -48,6 +48,24 @@ async fn batch(n: usize, work: u32) -> u64 {
     s
 }
 
+/// Yield every `k` arrivals — the tunable middle ground (env-var knob). `k == 1`
+/// is `per_tick`; `k == usize::MAX` is `batch`. The knob itself is a single
+/// counter compare per arrival; this measures the yield tax amortized over `k`.
+async fn yield_every(n: usize, work: u32, k: usize) -> u64 {
+    let mut s = 0x9E37_79B9_7F4A_7C15u64;
+    let mut since_yield = 0usize;
+    for _ in 0..n {
+        if since_yield >= k {
+            tokio::task::yield_now().await;
+            since_yield = 0;
+        }
+        mix(&mut s, work);
+        black_box(s);
+        since_yield += 1;
+    }
+    s
+}
+
 async fn time_ns_per_arrival<F, Fut>(f: F, n: usize) -> f64
 where
     F: Fn() -> Fut,
@@ -82,6 +100,28 @@ async fn main() {
             bt,
             pt - bt,
             pt / bt
+        );
+    }
+
+    // Tunable yield interval: how fast does the yield tax amortize, and what
+    // reactor-starvation window does each interval imply? Fixed light work
+    // (64 iters) stands in for a modest per-arrival dispatch cost.
+    const WORK: u32 = 64;
+    let base = time_ns_per_arrival(|| batch(N, WORK), N).await; // k = ∞
+    println!("\ntunable yield interval (work = {WORK} iters, per-arrival base ≈ {base:.1} ns):");
+    println!(
+        "{:>8} {:>14} {:>16} {:>18}",
+        "k", "ns/arrival", "yield_tax(ns)", "starvation(ns)"
+    );
+    for &k in &[1usize, 2, 4, 8, 16, 32, 64, 256, 1024] {
+        let t = time_ns_per_arrival(|| yield_every(N, WORK, k), N).await;
+        // Reactor is unpolled for k arrivals → k * per-arrival time between yields.
+        println!(
+            "{:>8} {:>14.2} {:>16.2} {:>18.0}",
+            k,
+            t,
+            t - base,
+            t * k as f64
         );
     }
 }
