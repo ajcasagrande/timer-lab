@@ -26,5 +26,7 @@ jobs:
         run: cargo test --release -- --nocapture
       - name: Jitter probe (per-sleep accuracy)
         run: cargo run --release --example jitter_probe
+      - name: Coalesce probe (per-tick yield vs batch drain)
+        run: cargo run --release --example coalesce_probe
       - name: Pacing probe (schedule drift across patterns/rates)
         run: cargo run --release --example pacing_probe
