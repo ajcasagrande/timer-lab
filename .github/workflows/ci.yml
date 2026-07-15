@@ -1,0 +1,29 @@
+name: timer-microtests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  label: linux-x86_64   }
+          - { os: macos-latest,   label: macos-arm64    }
+          - { os: macos-13,       label: macos-x86_64   }
+          - { os: windows-latest, label: windows-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --all-targets
+      - name: Test (invariant)
+        run: cargo test --release -- --nocapture
+      - name: Jitter probe (real per-OS accuracy)
+        run: cargo run --release --example jitter_probe

@@ -1,0 +1,17 @@
+[package]
+name = "timer-lab"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Cross-platform ns-precision async sleep micro-lab (Linux timerfd / macOS kqueue / Windows high-res waitable timer)"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "time"] }
+
+# AsyncFd + the raw timerfd/kqueue syscalls live behind unix only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# CreateWaitableTimerExW / SetWaitableTimer / WaitForSingleObject.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
