@@ -24,5 +24,7 @@ jobs:
         run: cargo build --release --all-targets
       - name: Test (invariant)
         run: cargo test --release -- --nocapture
-      - name: Jitter probe (real per-OS accuracy)
+      - name: Jitter probe (per-sleep accuracy)
         run: cargo run --release --example jitter_probe
+      - name: Pacing probe (schedule drift across patterns/rates)
+        run: cargo run --release --example pacing_probe
