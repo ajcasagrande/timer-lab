@@ -87,6 +87,37 @@ mod os {
     pub fn crosses(h: i64) -> bool {
         h >= 64
     }
+
+    /// Current fd-table capacity (`FDSize` in /proc/self/status); 0 if unknown.
+    pub fn fd_table_size() -> i64 {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|t| {
+                t.lines()
+                    .find_map(|l| l.strip_prefix("FDSize:"))
+                    .and_then(|v| v.trim().parse().ok())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Latency of one global RCU grace period (Linux `membarrier(GLOBAL)` calls
+    /// `synchronize_rcu()`), in ns; 0 if unavailable.
+    pub fn grace_period_ns() -> u128 {
+        #[cfg(target_os = "linux")]
+        {
+            let t0 = std::time::Instant::now();
+            // MEMBARRIER_CMD_GLOBAL == 1
+            let r = unsafe { libc::syscall(libc::SYS_membarrier, 1, 0, 0) };
+            if r < 0 {
+                return 0;
+            }
+            t0.elapsed().as_nanos()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            0
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -135,6 +166,14 @@ mod os {
     pub fn crosses(_h: i64) -> bool {
         false
     }
+
+    pub fn fd_table_size() -> i64 {
+        0
+    }
+
+    pub fn grace_period_ns() -> u128 {
+        0
+    }
 }
 
 struct Sample {
@@ -163,6 +202,7 @@ fn child(mode: &str) {
         }
     }
 
+    let fs0 = os::fd_table_size();
     let samples: Vec<Sample> = if mode == "single" {
         (0..THREADS)
             .map(|_| {
@@ -194,6 +234,7 @@ fn child(mode: &str) {
         joins.into_iter().map(|j| j.join().unwrap()).collect()
     };
 
+    let fs1 = os::fd_table_size();
     let max_ns = samples.iter().map(|s| s.ns).max().unwrap_or(0);
     let cross_ns = samples
         .iter()
@@ -203,7 +244,9 @@ fn child(mode: &str) {
         .unwrap_or(0);
     let max_handle = samples.iter().map(|s| s.handle).max().unwrap_or(-1);
     let failed = samples.iter().filter(|s| s.handle < 0).count();
-    println!("RESULT max_ns={max_ns} cross_ns={cross_ns} max_handle={max_handle} failed={failed}");
+    println!(
+        "RESULT max_ns={max_ns} cross_ns={cross_ns} max_handle={max_handle} failed={failed} fs0={fs0} fs1={fs1}"
+    );
 }
 
 fn field(line: &str, key: &str) -> u128 {
@@ -247,13 +290,27 @@ fn main() {
         "{THREADS} threads release together on a table filled to ~{FILL_TO} entries; \
          slowest allocation per fresh process, {RUNS} processes per mode.\n"
     );
-    println!("| mode | p50 | p90 | max | runs >1ms | slot>=64 alloc p50 |");
-    println!("|---|---:|---:|---:|---:|---:|");
+    #[cfg(target_os = "linux")]
+    {
+        let mut gp: Vec<u128> = (0..40).map(|_| os::grace_period_ns()).collect();
+        gp.sort_unstable();
+        println!(
+            "RCU grace-period latency on this host (`membarrier(GLOBAL)` -> synchronize_rcu): \
+             p50 {:.1} us, p90 {:.1} us, max {:.1} us\n",
+            gp[gp.len() / 2] as f64 / 1_000.0,
+            gp[(gp.len() * 9) / 10] as f64 / 1_000.0,
+            *gp.last().unwrap() as f64 / 1_000.0
+        );
+    }
+    println!("| mode | p50 | p90 | max | runs >1ms | slot>=64 alloc p50 | table grew | FDSize before->after |");
+    println!("|---|---:|---:|---:|---:|---:|---:|---|");
 
     let mut p50s = std::collections::BTreeMap::new();
     for mode in ["cold", "pre", "single"] {
         let mut max_ns = Vec::new();
         let mut cross_ns = Vec::new();
+        let mut grew = 0usize;
+        let mut sizes = std::collections::BTreeSet::new();
         for _ in 0..RUNS {
             let out = std::process::Command::new(&exe)
                 .args(["child", mode])
@@ -263,17 +320,23 @@ fn main() {
             let line = text.lines().find(|l| l.starts_with("RESULT")).unwrap_or("");
             max_ns.push(field(line, "max_ns="));
             cross_ns.push(field(line, "cross_ns="));
+            let (f0, f1) = (field(line, "fs0="), field(line, "fs1="));
+            if f1 > f0 {
+                grew += 1;
+            }
+            sizes.insert(format!("{f0}->{f1}"));
         }
         max_ns.sort_unstable();
         cross_ns.sort_unstable();
         let over = max_ns.iter().filter(|&&n| n > 1_000_000).count();
         let us = |n: u128| format!("{:.1} us", n as f64 / 1_000.0);
         println!(
-            "| {mode} | {} | {} | {} | {over}/{RUNS} | {} |",
+            "| {mode} | {} | {} | {} | {over}/{RUNS} | {} | {grew}/{RUNS} | {} |",
             us(pct(&max_ns, 0.5)),
             us(pct(&max_ns, 0.9)),
             us(*max_ns.last().unwrap()),
             us(pct(&cross_ns, 0.5)),
+            sizes.into_iter().collect::<Vec<_>>().join(", "),
         );
         p50s.insert(mode, pct(&max_ns, 0.5));
     }
