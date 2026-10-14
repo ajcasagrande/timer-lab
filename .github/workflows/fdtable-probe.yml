@@ -1,0 +1,29 @@
+name: fdtable-probe
+
+on:
+  push:
+    branches: [fdtable-probe]
+  workflow_dispatch:
+
+jobs:
+  probe:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    label: linux-x86_64 }
+          - { os: ubuntu-22.04,     label: linux-x86_64-22.04 }
+          - { os: ubuntu-24.04-arm, label: linux-arm64 }
+          - { os: macos-latest,     label: macos-arm64 }
+          - { os: windows-latest,   label: windows-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build probe
+        run: cargo build --release --example fdtable_probe
+      - name: Run fd-table probe
+        shell: bash
+        run: cargo run --release --example fdtable_probe | tee -a "$GITHUB_STEP_SUMMARY"
