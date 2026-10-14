@@ -88,6 +88,24 @@ mod os {
         h >= 64
     }
 
+    /// Close every inherited descriptor above stderr so child processes start
+    /// with a minimal (64-slot) fd table: a forked table is sized to the
+    /// highest open descriptor, and CI runners leak high fds into us.
+    pub fn close_inherited_fds() {
+        #[cfg(target_os = "linux")]
+        unsafe {
+            // close_range(3, ~0, 0); Linux >= 5.9.
+            libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32);
+        }
+        #[cfg(not(target_os = "linux"))]
+        unsafe {
+            let max = libc::sysconf(libc::_SC_OPEN_MAX).clamp(0, 65_536) as i32;
+            for fd in 3..max {
+                libc::close(fd);
+            }
+        }
+    }
+
     /// Current fd-table capacity (`FDSize` in /proc/self/status); 0 if unknown.
     pub fn fd_table_size() -> i64 {
         std::fs::read_to_string("/proc/self/status")
@@ -174,6 +192,8 @@ mod os {
     pub fn grace_period_ns() -> u128 {
         0
     }
+
+    pub fn close_inherited_fds() {}
 }
 
 struct Sample {
@@ -278,6 +298,7 @@ fn main() {
     }
 
     let exe = std::env::current_exe().expect("current_exe");
+    os::close_inherited_fds();
     let cpus = std::thread::available_parallelism().map_or(0, |n| n.get());
     println!(
         "### fd-table expansion probe ({}, {}, {} cpus, primitive `{}`)\n",
