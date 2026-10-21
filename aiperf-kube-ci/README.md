@@ -4,7 +4,9 @@ Isolated native-platform testing for [AIPerf PR #1133](https://github.com/NVIDIA
 
 The four credential/provider/PTY source files are copied byte-for-byte from the
 AIPerf repair revision recorded in `source-manifest.json`. SHA256 checks run before
-test selection. The fixture pins direct dependency versions to the production
+test selection. The fixture's Git attributes force LF source checkout on Windows
+as well as Unix, preserving those byte identities under `core.autocrlf`.
+The fixture pins direct dependency versions to the production
 lockfile and has its own locked transitive dependency graph.
 
 The matrix compiles the exact production modules and Unix public PTY test source,
