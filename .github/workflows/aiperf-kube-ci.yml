@@ -1,0 +1,49 @@
+name: aiperf-kube-portability
+run-name: AIP-3141 credential portability (${{ github.ref_name }})
+
+on:
+  push:
+    branches: ["ci/aip-3141-kube-portability-*"]
+    paths:
+      - "aiperf-kube-ci/**"
+      - ".github/workflows/aiperf-kube-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  credentials:
+    name: credential sources (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, label: linux-x86_64 }
+          - { os: macos-latest, label: macos-arm64 }
+          - { os: windows-latest, label: windows-x86_64 }
+    env:
+      CARGO_BIN_EXE_aiperf: /__not_executed__/aiperf
+      CARGO_TERM_COLOR: never
+      RUSTFLAGS: --cfg tokio_unstable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: aiperf-kube-ci -> target
+      - name: Compile exact provider and Unix public PTY sources
+        run: cargo check --locked --manifest-path aiperf-kube-ci/Cargo.toml --tests
+      - name: Lint source and test configurations
+        run: cargo clippy --locked --manifest-path aiperf-kube-ci/Cargo.toml --tests -- -A dead_code -D warnings
+      - name: Execute exact nonempty native-platform provider tests
+        run: python aiperf-kube-ci/run_tests.py

@@ -1,0 +1,41 @@
+{
+  "source_repository": "https://github.com/NVIDIA-dev/aiperf-rs",
+  "source_revision": "ac8e0eea6cc96d674e560c8c48c85356640a3d3b",
+  "published_review_head": "ed12d3d62775b736b96fba983f28ae1b11678dc6",
+  "scope": "Standalone native credential module units; Unix public CLI PTY source compile-only; not a full CLI build",
+  "files": {
+    "credential_process.rs": {
+      "source_path": "crates/cli/src/kube_client/credential_process.rs",
+      "sha256": "11b467e8ed1538c6d8895687537e2090322204d4982f2db6826746a5e8b889a5"
+    },
+    "credential_terminal.rs": {
+      "source_path": "crates/cli/src/kube_client/credential_terminal.rs",
+      "sha256": "61a0c9c69be26616ff56092a138ed4857baacf8dc29b47b19bdd82a977517cb8"
+    },
+    "credential_windows.rs": {
+      "source_path": "crates/cli/src/kube_client/credential_windows.rs",
+      "sha256": "75475ab01c8867baaa80d1d77211e7deffb5e8501cdad7399c9711d7ab9cbdd7"
+    },
+    "kube_credential_recovery.rs": {
+      "source_path": "crates/cli/tests/integration/kube_credential_recovery.rs",
+      "sha256": "754155533598e82f16cec89819cc584acc21ac6dd327b4f1819e05a218f5d0c0"
+    }
+  },
+  "tests": {
+    "unix": [
+      "credential_process::tests::prepare_future_is_send",
+      "credential_process::tests::exit_observation_keeps_the_child_waitable_until_group_cleanup",
+      "credential_process::tests::successful_provider_exit_kills_descendants_holding_output_pipes",
+      "credential_process::tests::owned_exec_decodes_credentials_without_retaining_sdk_command",
+      "credential_process::tests::nullable_fields_and_identity_pem_separator_match_sdk",
+      "credential_process::tests::provider_errors_do_not_reflect_output_and_reject_invalid_identities",
+      "credential_process::tests::both_provider_pipes_are_drained_and_independently_bounded",
+      "credential_process::tests::gcp_jsonpath_matches_sdk_brace_and_quote_semantics"
+    ],
+    "windows": [
+      "credential_windows::tests::environment_names_follow_windows_ordinal_case_rules",
+      "credential_windows::tests::executable_resolution_freezes_windows_search_tiers_and_extensions",
+      "credential_windows::tests::suspended_provider_job_owns_and_terminates_descendant_pipe_writers"
+    ]
+  }
+}
